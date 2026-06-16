@@ -678,6 +678,9 @@ mod tower_acoustic_tests {
             openings_direction_deg: vec![0.0, 90.0, 180.0, 270.0],
             internal_absorption_coeff: 0.1,
             internal_reverberation: 2.0,
+            ground_type: "marble".to_string(),
+            wall_roughness_mm: 5.0,
+            ceiling_height_m: 4.0,
         }
     }
 
@@ -904,6 +907,9 @@ mod tower_acoustic_tests {
             openings_direction_deg: vec![0.0, 180.0],
             internal_absorption_coeff: 0.2,
             internal_reverberation: 0.5,
+            ground_type: "wood".to_string(),
+            wall_roughness_mm: 10.0,
+            ceiling_height_m: 1.2,
         };
 
         let huge_tower = TowerBuildingParams {
@@ -921,6 +927,9 @@ mod tower_acoustic_tests {
             openings_direction_deg: vec![0.0, 45.0, 90.0, 135.0, 180.0, 225.0, 270.0, 315.0],
             internal_absorption_coeff: 0.05,
             internal_reverberation: 4.0,
+            ground_type: "marble".to_string(),
+            wall_roughness_mm: 2.0,
+            ceiling_height_m: 12.0,
         };
 
         let tiny_req = TowerAcousticRequest { bell_id: None, frequency_hz: Some(512.0), tower: tiny_tower };

@@ -263,6 +263,14 @@ pub struct CastingMethodMetrics {
     pub pros: Vec<String>,
     pub cons: Vec<String>,
     pub famous_examples: Vec<String>,
+    #[serde(default)]
+    pub standard_code: String,
+    #[serde(default)]
+    pub standard_reference: String,
+    #[serde(default)]
+    pub data_source: String,
+    #[serde(default)]
+    pub quality_grade: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -313,7 +321,17 @@ pub struct TowerBuildingParams {
     pub openings_direction_deg: Vec<f64>,
     pub internal_absorption_coeff: f64,
     pub internal_reverberation: f64,
+    #[serde(default = "default_ground_type")]
+    pub ground_type: String,
+    #[serde(default = "default_wall_roughness")]
+    pub wall_roughness_mm: f64,
+    #[serde(default = "default_ceiling_height")]
+    pub ceiling_height_m: f64,
 }
+
+fn default_ground_type() -> String { "marble".to_string() }
+fn default_wall_roughness() -> f64 { 5.0 }
+fn default_ceiling_height() -> f64 { 0.0 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TowerAcousticResult {

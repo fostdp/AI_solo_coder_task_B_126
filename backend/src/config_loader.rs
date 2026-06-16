@@ -34,6 +34,14 @@ pub struct Material {
     pub damping_coefficient: Option<f64>,
     #[serde(default)]
     pub acoustic_note: Option<String>,
+    #[serde(default)]
+    pub data_source: Option<String>,
+    #[serde(default)]
+    pub measurement_method: Option<String>,
+    #[serde(default)]
+    pub uncertainty_pct: Option<f64>,
+    #[serde(default)]
+    pub reference_documents: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -4,6 +4,53 @@ use uuid::Uuid;
 const POSITION_MODES: [&str; 5] = ["lip", "waist", "shoulder", "crown", "rim"];
 const MALLET_HARDNESS: [&str; 4] = ["soft", "medium", "hard", "metal"];
 
+const IDEAL_RATIOS: [f64; 8] = [0.5, 1.0, 1.19, 1.5, 2.0, 2.5, 3.0, 4.0];
+
+const POS_AMP: [f64; 5] = [1.2, 1.0, 0.8, 0.5, 1.1];
+const POS_INDEX: [usize; 5] = [0, 1, 2, 3, 4];
+
+const POS_BIAS: [[f64; 8]; 5] = [
+    [1.0, 1.2, 0.9, 1.1, 0.8, 1.0, 0.7, 0.9],
+    [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0],
+    [0.9, 0.8, 1.0, 1.1, 1.2, 1.0, 1.1, 1.0],
+    [0.6, 0.5, 0.7, 1.0, 1.1, 1.2, 1.3, 1.1],
+    [1.1, 1.1, 0.8, 0.9, 0.9, 1.0, 0.8, 0.7],
+];
+
+const MALLET_SPECTRAL: [[f64; 8]; 4] = [
+    [1.0, 0.8, 0.6, 0.45, 0.35, 0.25, 0.2, 0.15],
+    [1.0, 1.0, 0.85, 0.7, 0.6, 0.5, 0.4, 0.3],
+    [1.0, 1.1, 1.15, 1.1, 1.0, 0.9, 0.8, 0.7],
+    [0.8, 1.0, 1.2, 1.4, 1.5, 1.6, 1.5, 1.4],
+];
+
+const MALLET_MASS: [f64; 4] = [2.0, 4.0, 6.0, 3.0];
+const MALLET_CONTACT_MOD: [f64; 4] = [1e7, 5e7, 2e8, 5e8];
+const MALLET_DAMPING: [f64; 4] = [0.95, 0.85, 0.75, 0.7];
+const MALLET_ATTACK_MS: [f64; 4] = [25.0, 12.0, 5.0, 3.0];
+const CONTACT_MOD_REF: f64 = 5e7;
+
+fn pos_idx(key: &str) -> usize {
+    match key {
+        "lip" => 0,
+        "waist" => 1,
+        "shoulder" => 2,
+        "crown" => 3,
+        "rim" => 4,
+        _ => 1,
+    }
+}
+
+fn mallet_idx(key: &str) -> usize {
+    match key {
+        "soft" => 0,
+        "medium" => 1,
+        "hard" => 2,
+        "metal" => 3,
+        _ => 1,
+    }
+}
+
 pub fn compute_strike_impact(
     params: &VirtualStrikeParams,
     bell: Option<&Bell>,
@@ -15,6 +62,7 @@ pub fn compute_strike_impact(
     } else {
         "waist"
     };
+    let pi = pos_idx(pos_key);
 
     let mallet = params.mallet_hardness.to_lowercase();
     let mallet_key = if MALLET_HARDNESS.contains(&mallet.as_str()) {
@@ -22,6 +70,7 @@ pub fn compute_strike_impact(
     } else {
         "medium"
     };
+    let mi = mallet_idx(mallet_key);
 
     let bell_weight = bell.map(|b| b.weight_kg).unwrap_or(5000.0);
     let bell_freq = bell.map(|b| b.expected_freq_hz).unwrap_or(256.0);
@@ -29,63 +78,30 @@ pub fn compute_strike_impact(
     let expected_speed = 6.0;
     let impact_vel = expected_speed * strike_force.powf(0.5);
 
-    let mallet_mass = match mallet_key {
-        "soft" => 2.0,
-        "medium" => 4.0,
-        "hard" => 6.0,
-        "metal" => 3.0,
-        _ => 4.0,
-    };
+    let mallet_mass = MALLET_MASS[mi];
+    let contact_modulus = MALLET_CONTACT_MOD[mi];
 
-    let contact_modulus = match mallet_key {
-        "soft" => 1e7,
-        "medium" => 5e7,
-        "hard" => 2e8,
-        "metal" => 5e8,
-        _ => 5e7,
-    };
-
-    let peak_force_n = (0.5 * mallet_mass * impact_vel.powi(2) * contact_modulus).powf(2.0 / 3.0) * 0.01;
+    let kinetic_energy = 0.5 * mallet_mass * impact_vel.powi(2);
+    let peak_force_n = (kinetic_energy * contact_modulus).powf(2.0 / 3.0) * 0.01;
     let base_contact_ms = (1.0 / bell_freq * 1000.0) * (2.0 - strike_force) * 0.7;
-    let hardness_factor = (5e7 / contact_modulus).powf(0.4);
+    let hardness_factor = (CONTACT_MOD_REF / contact_modulus).powf(0.4);
     let contact_ms = base_contact_ms * hardness_factor;
 
-    let pos_amplitude_factor = match pos_key {
-        "lip" => 1.2,
-        "waist" => 1.0,
-        "shoulder" => 0.8,
-        "crown" => 0.5,
-        "rim" => 1.1,
-        _ => 1.0,
-    };
+    let pos_amplitude_factor = POS_AMP[pi];
+    let pos_harmonic_bias = &POS_BIAS[pi];
+    let mallet_spectral_bias = &MALLET_SPECTRAL[mi];
 
-    let pos_harmonic_bias = match pos_key {
-        "lip" => vec![1.0, 1.2, 0.9, 1.1, 0.8, 1.0, 0.7, 0.9],
-        "waist" => vec![1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0],
-        "shoulder" => vec![0.9, 0.8, 1.0, 1.1, 1.2, 1.0, 1.1, 1.0],
-        "crown" => vec![0.6, 0.5, 0.7, 1.0, 1.1, 1.2, 1.3, 1.1],
-        "rim" => vec![1.1, 1.1, 0.8, 0.9, 0.9, 1.0, 0.8, 0.7],
-        _ => vec![1.0; 8],
-    };
-
-    let mallet_spectral_bias = match mallet_key {
-        "soft" => vec![1.0, 0.8, 0.6, 0.45, 0.35, 0.25, 0.2, 0.15],
-        "medium" => vec![1.0, 1.0, 0.85, 0.7, 0.6, 0.5, 0.4, 0.3],
-        "hard" => vec![1.0, 1.1, 1.15, 1.1, 1.0, 0.9, 0.8, 0.7],
-        "metal" => vec![0.8, 1.0, 1.2, 1.4, 1.5, 1.6, 1.5, 1.4],
-        _ => vec![1.0; 8],
-    };
-
-    let mut harmonic_amps = Vec::with_capacity(8);
+    let mut harmonic_amps = [0.0f64; 8];
+    let mut total_amp = 0.0;
     for i in 0..8 {
         let base = 1.0 / (i as f64 + 1.0).powi(2);
         let amp = base * strike_force * pos_amplitude_factor
             * pos_harmonic_bias[i]
             * mallet_spectral_bias[i];
-        harmonic_amps.push(amp);
+        harmonic_amps[i] = amp;
+        total_amp += amp;
     }
 
-    let total_amp: f64 = harmonic_amps.iter().sum();
     let ref_pressure = 2e-5_f64;
     let sound_pressure = total_amp * 0.5;
     let spl_db = 20.0 * (sound_pressure / ref_pressure).log10();
@@ -99,13 +115,7 @@ pub fn compute_strike_impact(
     };
     let phon = (freq_weighted_phon * strike_force.powf(0.5)).min(120.0).max(30.0);
 
-    let damping_penalty = match mallet_key {
-        "soft" => 0.95,
-        "medium" => 0.85,
-        "hard" => 0.75,
-        "metal" => 0.7,
-        _ => 0.85,
-    };
+    let damping_penalty = MALLET_DAMPING[mi];
     let mass_factor = (bell_weight / 5000.0).powf(0.3);
     let base_decay = (2.5 + (bell_weight.log10() - 3.0) * 0.5).max(1.0);
     let estimated_decay = base_decay * mass_factor * damping_penalty * (1.0 + pos_amplitude_factor * 0.1);
@@ -114,33 +124,24 @@ pub fn compute_strike_impact(
         strike_force, pos_key, mallet_key, phon, estimated_decay, bell_freq,
     );
 
-    let ideal_ratios = [0.5, 1.0, 1.19, 1.5, 2.0, 2.5, 3.0, 4.0];
-    let partials: Vec<PartialParams> = (0..8)
-        .map(|i| {
-            let freq_ratio = ideal_ratios[i] * (1.0 + (i as f64 * 0.003));
-            let detune = match mallet_key {
-                "metal" => (-10..10).next().unwrap_or(0) as f64 * 0.5,
-                _ => (-5..5).next().unwrap_or(0) as f64 * 0.2,
-            };
-            let decay = (estimated_decay / freq_ratio.powf(0.6)).max(0.2);
-            let gain = (harmonic_amps[i] / total_amp * 3.0).min(1.0);
-            PartialParams {
-                freq_ratio,
-                gain,
-                decay_s: decay,
-                detune_cents: detune,
-            }
-        })
-        .collect();
+    let mut partials = Vec::with_capacity(8);
+    for i in 0..8 {
+        let freq_ratio = IDEAL_RATIOS[i] * (1.0 + (i as f64 * 0.003));
+        let detune = match mi {
+            3 => 0.0,
+            _ => 0.0,
+        };
+        let decay = (estimated_decay / freq_ratio.powf(0.6)).max(0.2);
+        let gain = (harmonic_amps[i] / total_amp * 3.0).min(1.0);
+        partials.push(PartialParams {
+            freq_ratio,
+            gain,
+            decay_s: decay,
+            detune_cents: detune,
+        });
+    }
 
-    let attack_ms = match mallet_key {
-        "soft" => 25.0,
-        "medium" => 12.0,
-        "hard" => 5.0,
-        "metal" => 3.0,
-        _ => 12.0,
-    };
-
+    let attack_ms = MALLET_ATTACK_MS[mi];
     let master_gain = 0.3 + strike_force * 0.5;
 
     VirtualStrikeResult {
@@ -151,7 +152,7 @@ pub fn compute_strike_impact(
         estimated_decay_s: estimated_decay,
         perceived_loudness_phon: phon,
         quality_description: quality,
-        harmonic_amplitudes: harmonic_amps,
+        harmonic_amplitudes: harmonic_amps.to_vec(),
         audio_synthesis_params: AudioSynthParams {
             fundamental_hz: bell_freq,
             partials,

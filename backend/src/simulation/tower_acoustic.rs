@@ -3,6 +3,62 @@ use crate::models::*;
 const GRID_SIZE: usize = 100;
 const MAX_DISTANCE_M: f64 = 500.0;
 
+fn frequency_dependent_absorption(material: &str, freq: f64) -> f64 {
+    let f = freq.max(50.0).min(8000.0);
+    let octave_ratio = (f / 500.0).log2();
+    let base = match material {
+        "brick" => 0.03 + 0.02 * octave_ratio.max(0.0),
+        "stone" => 0.02 + 0.015 * octave_ratio.max(0.0),
+        "wood" => 0.10 + 0.08 * octave_ratio.max(0.0),
+        "concrete" => 0.05 + 0.03 * octave_ratio.max(0.0),
+        "adobe" => 0.15 + 0.10 * octave_ratio.max(0.0),
+        _ => 0.08 + 0.04 * octave_ratio.max(0.0),
+    };
+    base.max(0.01).min(0.8)
+}
+
+fn roof_reflection_coeff(roof_style: &str, freq: f64) -> f64 {
+    let base = match roof_style {
+        "dome" | "穹顶" | "圆顶" => 0.95,
+        "gable" | "山墙" | "硬山" | "悬山" => 0.90,
+        "flat" | "平顶" => 0.85,
+        "pagoda" | "塔状" | "攒尖" => 0.92,
+        "hipped" | "庑殿" | "歇山" | "重檐庑殿顶" | "歇山顶" | "庑殿顶" | "十字歇山顶" => 0.88,
+        _ => 0.90,
+    };
+    let freq_factor = 1.0 + 0.05 * ((freq / 500.0).log2()).tanh();
+    (base * freq_factor).min(0.98)
+}
+
+fn ground_reflection_coeff(ground_type: &str, freq: f64, incident_angle: f64) -> f64 {
+    let base = match ground_type {
+        "grass" => 0.60,
+        "soil" => 0.70,
+        "asphalt" => 0.92,
+        "concrete" => 0.95,
+        "water" => 0.98,
+        "marble" => 0.96,
+        _ => 0.75,
+    };
+    let grazing_factor = 0.5 + 0.5 * incident_angle.cos().abs();
+    let freq_factor = 1.0 - 0.2 * ((freq / 1000.0).log2()).max(0.0).min(1.0);
+    (base * grazing_factor * freq_factor).max(0.1).min(0.99)
+}
+
+fn diffusion_coefficient(material: &str, roughness: f64, freq: f64) -> f64 {
+    let base_rough = match material {
+        "brick" => 0.3,
+        "stone" => 0.2,
+        "wood" => 0.5,
+        "concrete" => 0.15,
+        "adobe" => 0.6,
+        _ => 0.25,
+    };
+    let wavelength = 343.0 / freq;
+    let roughness_ratio = (roughness / wavelength).min(2.0);
+    (base_rough + roughness_ratio * 0.3).min(0.9)
+}
+
 pub fn simulate_tower_acoustics(req: &TowerAcousticRequest) -> TowerAcousticResult {
     let frequency = req.frequency_hz.unwrap_or(256.0);
     let tower = &req.tower;
@@ -48,23 +104,35 @@ fn compute_2d_field_with_tower(
     let dz = MAX_DISTANCE_M * 2.0 / GRID_SIZE as f64;
 
     let total_open_area = tower.window_count as f64 * tower.window_width_m * tower.window_height_m;
-    let chamber_surface = 2.0 * (tower.width_m + tower.depth_m) * tower.bell_chamber_height_m;
-    let openness_ratio = (total_open_area / chamber_surface.max(0.1)).min(0.8);
+    let wall_area = 2.0 * (tower.width_m + tower.depth_m) * tower.bell_chamber_height_m;
+    let floor_area = tower.width_m * tower.depth_m;
+    let ceiling_area = tower.width_m * tower.depth_m;
+    let total_surface = wall_area + floor_area + ceiling_area;
+    let openness_ratio = (total_open_area / wall_area.max(0.1)).min(0.8);
 
-    let wall_reflection = match tower.wall_material.as_str() {
-        "brick" => 0.92,
-        "stone" => 0.95,
-        "wood" => 0.60,
-        "concrete" => 0.88,
-        "adobe" => 0.70,
-        _ => 0.85,
-    };
-    let wall_absorption = 1.0 - wall_reflection;
-    let effective_absorption = (wall_absorption * (1.0 - openness_ratio) + tower.internal_absorption_coeff * openness_ratio).max(0.05);
+    let wall_absorption = frequency_dependent_absorption(&tower.wall_material, freq);
+    let wall_reflection = 1.0 - wall_absorption;
+
+    let floor_absorption = frequency_dependent_absorption(&tower.ground_type, freq);
+    let ceiling_height = if tower.ceiling_height_m > 0.0 { tower.ceiling_height_m } else { tower.bell_chamber_height_m * 0.8 };
+    let roof_refl = roof_reflection_coeff(&tower.roof_style, freq);
+    let ceiling_absorption = 1.0 - roof_refl;
+
+    let wall_diffusion = diffusion_coefficient(&tower.wall_material, tower.wall_roughness_mm, freq);
+    let diffuse_reflection = wall_reflection * wall_diffusion;
+    let specular_reflection = wall_reflection * (1.0 - wall_diffusion);
+
+    let effective_absorption = (
+        wall_area * wall_absorption * (1.0 - openness_ratio)
+        + floor_area * floor_absorption
+        + ceiling_area * ceiling_absorption
+        + total_open_area * tower.internal_absorption_coeff
+    ) / total_surface.max(0.1);
+    let effective_absorption = effective_absorption.max(0.02);
 
     let rt60 = if effective_absorption > 0.0 {
         let volume = tower.width_m * tower.depth_m * tower.bell_chamber_height_m;
-        let sabine_area = chamber_surface * effective_absorption + total_open_area;
+        let sabine_area = total_surface * effective_absorption + total_open_area * 0.5;
         0.161 * volume / sabine_area.max(0.1)
     } else {
         4.0
@@ -101,12 +169,37 @@ fn compute_2d_field_with_tower(
             let num_reflections = 3;
             let mut p_total = p_direct;
             for order in 1..=num_reflections {
-                let reflection_decay = wall_reflection.powi(order as i32);
+                let spec_decay = specular_reflection.powi(order as i32);
+                let diff_decay = diffuse_reflection.powi(order as i32);
                 let path_extra = (order as f64) * nearest_wall_dist.max(0.1) * 2.0;
                 let r_reflect = r_3d + path_extra;
                 if r_reflect > 0.1 {
                     let phase_shift = k * path_extra + order as f64 * 0.5;
-                    p_total += (k * r_reflect - phase_shift).sin() / r_reflect * reflection_decay * 0.5;
+                    let spec_comp = (k * r_reflect - phase_shift).sin() / r_reflect * spec_decay * 0.4;
+                    let diff_comp = (k * r_reflect).sin() / r_reflect * diff_decay * 0.25;
+                    p_total += spec_comp + diff_comp;
+                }
+            }
+
+            let ceiling_dist = ceiling_height - bell_h;
+            if ceiling_dist > 0.5 {
+                let r_ceiling = (r_ground * r_ground + (bell_h + ceiling_dist * 2.0).powi(2)).sqrt();
+                if r_ceiling > 0.1 {
+                    let path_diff = r_ceiling - r_3d;
+                    let phase = k * path_diff + std::f64::consts::PI;
+                    p_total += (k * r_ceiling - phase).sin() / r_ceiling * roof_refl * 0.35;
+                }
+            }
+
+            let floor_dist = bell_h;
+            if floor_dist > 0.5 {
+                let r_floor = (r_ground * r_ground + (bell_h + floor_dist * 2.0).powi(2)).sqrt();
+                if r_floor > 0.1 {
+                    let incident_angle = (r_ground / r_floor).acos();
+                    let floor_refl = 1.0 - floor_absorption;
+                    let path_diff = r_floor - r_3d;
+                    let phase = k * path_diff + std::f64::consts::PI;
+                    p_total += (k * r_floor - phase).sin() / r_floor * floor_refl * 0.4;
                 }
             }
 
@@ -126,7 +219,13 @@ fn compute_2d_field_with_tower(
                 p_total *= dir_boost * edge_diffraction;
             }
 
-            let ground_effect = 1.0 + (-r_ground / 200.0).exp() * 0.4;
+            let ground_grazing = if r_ground > 0.1 {
+                (bell_h / r_3d).acos()
+            } else {
+                0.0
+            };
+            let ground_refl = ground_reflection_coeff(&tower.ground_type, freq, ground_grazing);
+            let ground_effect = 1.0 + (-r_ground / 200.0).exp() * 0.4 * ground_refl;
             p_total *= ground_effect;
 
             let p_ref = 2e-5;
@@ -511,6 +610,9 @@ pub fn get_preset_tower_configs() -> Vec<TowerBuildingParams> {
             openings_direction_deg: vec![0.0, 90.0, 180.0, 270.0],
             internal_absorption_coeff: 0.15,
             internal_reverberation: 1.5,
+            ground_type: "wood".to_string(),
+            wall_roughness_mm: 8.0,
+            ceiling_height_m: 4.0,
         },
         TowerBuildingParams {
             tower_style: "明代鼓楼 (砖石)".to_string(),
@@ -527,6 +629,9 @@ pub fn get_preset_tower_configs() -> Vec<TowerBuildingParams> {
             openings_direction_deg: vec![0.0, 45.0, 90.0, 135.0, 180.0, 225.0, 270.0, 315.0],
             internal_absorption_coeff: 0.08,
             internal_reverberation: 3.5,
+            ground_type: "stone".to_string(),
+            wall_roughness_mm: 5.0,
+            ceiling_height_m: 8.0,
         },
         TowerBuildingParams {
             tower_style: "苏州寒山寺钟楼".to_string(),
@@ -543,6 +648,9 @@ pub fn get_preset_tower_configs() -> Vec<TowerBuildingParams> {
             openings_direction_deg: vec![0.0, 90.0, 180.0, 270.0],
             internal_absorption_coeff: 0.1,
             internal_reverberation: 2.2,
+            ground_type: "marble".to_string(),
+            wall_roughness_mm: 6.0,
+            ceiling_height_m: 3.2,
         },
         TowerBuildingParams {
             tower_style: "永乐大钟钟楼 (北京觉生寺)".to_string(),
@@ -559,6 +667,9 @@ pub fn get_preset_tower_configs() -> Vec<TowerBuildingParams> {
             openings_direction_deg: vec![0.0, 30.0, 60.0, 90.0, 120.0, 150.0, 180.0, 210.0, 240.0, 270.0, 300.0, 330.0],
             internal_absorption_coeff: 0.06,
             internal_reverberation: 5.0,
+            ground_type: "marble".to_string(),
+            wall_roughness_mm: 3.0,
+            ceiling_height_m: 12.0,
         },
         TowerBuildingParams {
             tower_style: "现代简约钟楼".to_string(),
@@ -575,6 +686,9 @@ pub fn get_preset_tower_configs() -> Vec<TowerBuildingParams> {
             openings_direction_deg: vec![0.0, 60.0, 120.0, 180.0, 240.0, 300.0],
             internal_absorption_coeff: 0.12,
             internal_reverberation: 2.0,
+            ground_type: "concrete".to_string(),
+            wall_roughness_mm: 2.0,
+            ceiling_height_m: 6.0,
         },
     ]
 }
