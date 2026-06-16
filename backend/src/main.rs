@@ -178,6 +178,20 @@ async fn main() -> anyhow::Result<()> {
         .route("/alerts/:id/resolve", post(handlers::resolve_alert))
         .route("/casting-process", post(handlers::post_casting_process))
         .route("/casting-process/bell/:bell_id", get(handlers::get_casting_process))
+        // Feature 1: 合金配比音质对比分析
+        .route("/analysis/alloy-comparison", post(handlers::post_alloy_comparison))
+        .route("/analysis/alloy-suggestion", get(handlers::get_alloy_suggestion))
+        // Feature 2: 古代vs现代铸造工艺对比
+        .route("/analysis/casting-methods", post(handlers::post_casting_method_comparison))
+        .route("/analysis/casting-methods/list", get(handlers::get_casting_method_list))
+        .route("/analysis/casting-methods/recommend", get(handlers::get_recommended_method))
+        // Feature 3: 钟楼建筑声学传播模拟
+        .route("/analysis/tower-acoustic", post(handlers::post_tower_acoustic_sim))
+        .route("/analysis/tower-presets", get(handlers::get_preset_tower_configs))
+        // Feature 4: 虚拟敲钟体验
+        .route("/experience/virtual-strike", post(handlers::post_virtual_strike))
+        .route("/experience/strike-options", get(handlers::get_strike_options))
+        .route("/experience/strike-tutorial", get(handlers::get_strike_tutorial))
         .with_state(app_state)
         .layer(cors);
 

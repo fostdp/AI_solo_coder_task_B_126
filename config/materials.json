@@ -85,5 +85,55 @@
             "si": 0.020,
             "mn": 0.005
         }
+    },
+    "gray_cast_iron": {
+        "name": "灰铸铁（近代铁钟）",
+        "density": 7150.0,
+        "young_modulus": 1.20e11,
+        "poisson_ratio": 0.28,
+        "thermal_conductivity": 52.0,
+        "thermal_diffusivity": 1.70e-5,
+        "specific_heat": 460.0,
+        "melting_point": 1180.0,
+        "liquidus_temperature": 1280.0,
+        "solidus_temperature": 1130.0,
+        "shrinkage_coefficient": 0.028,
+        "niyama_critical": 0.58,
+        "niyama_high_risk": 0.32,
+        "damping_coefficient": 0.12,
+        "acoustic_note": "延音短，音色沉闷，适合大型户外钟（耐久但音质差）",
+        "composition": {
+            "fe": 0.935,
+            "c": 0.032,
+            "si": 0.022,
+            "mn": 0.006,
+            "p": 0.003,
+            "s": 0.002
+        }
+    },
+    "high_tin_bronze": {
+        "name": "高锡青铜（声学优化，22%Sn）",
+        "density": 8920.0,
+        "young_modulus": 1.25e11,
+        "poisson_ratio": 0.33,
+        "thermal_conductivity": 58.0,
+        "thermal_diffusivity": 1.10e-5,
+        "specific_heat": 370.0,
+        "melting_point": 920.0,
+        "liquidus_temperature": 1100.0,
+        "solidus_temperature": 980.0,
+        "shrinkage_coefficient": 0.052,
+        "niyama_critical": 0.90,
+        "niyama_high_risk": 0.60,
+        "damping_coefficient": 0.018,
+        "acoustic_note": "音色最清亮，泛音丰富，延音极佳（22%锡为声学黄金比例）",
+        "composition": {
+            "cu": 0.765,
+            "sn": 0.220,
+            "pb": 0.005,
+            "zn": 0.003,
+            "ni": 0.004,
+            "other": 0.003
+        }
     }
 }

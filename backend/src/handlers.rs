@@ -280,3 +280,128 @@ pub async fn get_casting_process(
             .into_response(),
     }
 }
+
+// ========== Feature 1: 合金配比音质对比分析 ==========
+
+pub async fn post_alloy_comparison(
+    State(state): State<AppState>,
+    Json(req): Json<AlloyComparisonRequest>,
+) -> impl IntoResponse {
+    let bell = if let Some(id) = req.bell_id {
+        state.db.get_bell(id).await.ok().flatten()
+    } else {
+        None
+    };
+    let result = crate::simulation::compare_alloys(&req, bell.as_ref());
+    Json(ApiResponse::ok(result))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AlloySuggestionQuery {
+    pub target_freq_hz: f64,
+    pub max_deviation_cents: Option<f64>,
+}
+
+pub async fn get_alloy_suggestion(
+    Query(query): Query<AlloySuggestionQuery>,
+) -> impl IntoResponse {
+    let max_dev = query.max_deviation_cents.unwrap_or(25.0);
+    let suggestion = crate::simulation::get_alloy_composition_suggestion(query.target_freq_hz, max_dev);
+    Json(ApiResponse::ok(suggestion))
+}
+
+// ========== Feature 2: 古代vs现代铸造工艺对比 ==========
+
+pub async fn post_casting_method_comparison(
+    Json(req): Json<CastingMethodRequest>,
+) -> impl IntoResponse {
+    let result = crate::simulation::compare_casting_methods(&req);
+    Json(ApiResponse::ok(result))
+}
+
+pub async fn get_casting_method_list() -> impl IntoResponse {
+    let list = crate::simulation::get_casting_method_key_list();
+    Json(ApiResponse::ok(list))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RecommendMethodQuery {
+    pub bell_weight_tons: f64,
+    pub acoustic_requirement: Option<f64>,
+    pub budget_per_kg: Option<f64>,
+    pub need_complex_artwork: Option<bool>,
+}
+
+pub async fn get_recommended_method(
+    Query(query): Query<RecommendMethodQuery>,
+) -> impl IntoResponse {
+    let acq = query.acoustic_requirement.unwrap_or(8.0);
+    let budget = query.budget_per_kg.unwrap_or(200.0);
+    let artwork = query.need_complex_artwork.unwrap_or(false);
+    let method = crate::simulation::get_recommended_method_for_bell(
+        query.bell_weight_tons,
+        acq,
+        budget,
+        artwork,
+    );
+    Json(ApiResponse::ok(serde_json::json!({
+        "recommended_method_key": method
+    })))
+}
+
+// ========== Feature 3: 钟楼建筑声学传播模拟 ==========
+
+pub async fn post_tower_acoustic_sim(
+    Json(req): Json<TowerAcousticRequest>,
+) -> impl IntoResponse {
+    let result = crate::simulation::simulate_tower_acoustics(&req);
+    Json(ApiResponse::ok(result))
+}
+
+pub async fn get_preset_tower_configs() -> impl IntoResponse {
+    let configs = crate::simulation::get_preset_tower_configs();
+    Json(ApiResponse::ok(configs))
+}
+
+// ========== Feature 4: 虚拟敲钟体验 ==========
+
+pub async fn post_virtual_strike(
+    State(state): State<AppState>,
+    Json(params): Json<VirtualStrikeParams>,
+) -> impl IntoResponse {
+    let bell = state.db.get_bell(params.bell_id).await.ok().flatten();
+    let result = crate::simulation::compute_strike_impact(&params, bell.as_ref());
+    Json(ApiResponse::ok(result))
+}
+
+pub async fn get_strike_options() -> impl IntoResponse {
+    let positions: Vec<serde_json::Value> = crate::simulation::get_position_options()
+        .into_iter()
+        .map(|(key, desc, factor)| {
+            serde_json::json!({
+                "key": key,
+                "description": desc,
+                "amplitude_factor": factor
+            })
+        })
+        .collect();
+    let mallets: Vec<serde_json::Value> = crate::simulation::get_mallet_options()
+        .into_iter()
+        .map(|(key, name, desc)| {
+            serde_json::json!({
+                "key": key,
+                "name": name,
+                "description": desc
+            })
+        })
+        .collect();
+    Json(ApiResponse::ok(serde_json::json!({
+        "positions": positions,
+        "mallets": mallets
+    })))
+}
+
+pub async fn get_strike_tutorial() -> impl IntoResponse {
+    let tutorial = crate::simulation::generate_strike_tutorial();
+    Json(ApiResponse::ok(tutorial))
+}

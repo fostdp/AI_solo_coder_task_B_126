@@ -30,6 +30,10 @@ pub struct Material {
     pub niyama_critical: f64,
     pub niyama_high_risk: f64,
     pub composition: HashMap<String, f64>,
+    #[serde(default)]
+    pub damping_coefficient: Option<f64>,
+    #[serde(default)]
+    pub acoustic_note: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
