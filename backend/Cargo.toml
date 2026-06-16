@@ -18,6 +18,7 @@ rumqttc = { version = "0.22" }
 rand = "0.8"
 nalgebra = "0.32"
 num-traits = "0.2"
+num_cpus = "1.16"
 thiserror = "1.0"
 anyhow = "1.0"
 clap = { version = "4.4", features = ["derive"] }

@@ -1,3 +1,5 @@
+//! 虚拟敲钟模块 - 模拟敲击交互的物理与声学真实感
+
 use crate::models::*;
 use uuid::Uuid;
 
@@ -308,4 +310,186 @@ pub fn generate_strike_tutorial() -> Vec<String> {
         "".to_string(),
         "✨ 听辨练习: 调节不同位置+不同槌+不同力度组合，仔细听泛音结构变化!".to_string(),
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::VirtualStrikeParams;
+    use uuid::Uuid;
+
+    fn make_test_params(pos: &str, mallet: &str, force: f64) -> VirtualStrikeParams {
+        VirtualStrikeParams {
+            bell_id: Uuid::new_v4(),
+            strike_force: force,
+            strike_position: pos.to_string(),
+            strike_angle_deg: 0.0,
+            mallet_hardness: mallet.to_string(),
+        }
+    }
+
+    #[test]
+    fn test_compute_strike_impact_standard() {
+        let params = make_test_params("lip", "medium", 0.5);
+        let result = compute_strike_impact(&params, None);
+        assert!(result.audio_synthesis_params.fundamental_hz > 0.0);
+        assert!(result.audio_synthesis_params.partials.len() >= 8);
+        assert!(result.perceived_loudness_phon > 0.0);
+    }
+
+    #[test]
+    fn test_compute_strike_impact_min_force() {
+        let params = make_test_params("lip", "medium", 0.01);
+        let result = compute_strike_impact(&params, None);
+        assert!(result.peak_contact_force_n > 0.0);
+    }
+
+    #[test]
+    fn test_compute_strike_impact_max_force() {
+        let params = make_test_params("lip", "medium", 1.0);
+        let result = compute_strike_impact(&params, None);
+        assert!(result.peak_contact_force_n > 0.0);
+    }
+
+    #[test]
+    fn test_compute_strike_impact_negative_force_clamped() {
+        let params = make_test_params("lip", "medium", -0.5);
+        let result = compute_strike_impact(&params, None);
+        assert!(result.impact_velocity > 0.0);
+    }
+
+    #[test]
+    fn test_compute_strike_impact_invalid_position() {
+        let params = make_test_params("invalid_pos", "medium", 0.5);
+        let result = compute_strike_impact(&params, None);
+        assert!(result.audio_synthesis_params.fundamental_hz > 0.0);
+    }
+
+    #[test]
+    fn test_compute_strike_impact_invalid_mallet() {
+        let params = make_test_params("lip", "invalid_mallet", 0.5);
+        let result = compute_strike_impact(&params, None);
+        assert!(result.audio_synthesis_params.fundamental_hz > 0.0);
+    }
+
+    #[test]
+    fn test_compute_strike_impact_all_positions() {
+        let positions = ["lip", "rim", "waist", "shoulder", "crown"];
+        for pos in positions.iter() {
+            let params = make_test_params(pos, "medium", 0.5);
+            let result = compute_strike_impact(&params, None);
+            assert!(result.estimated_decay_s > 0.0);
+            assert!(!result.quality_description.is_empty());
+        }
+    }
+
+    #[test]
+    fn test_compute_strike_impact_mallet_hardness_effect() {
+        let mallets = ["soft", "medium", "hard", "metal"];
+        let mut results = Vec::new();
+        for m in mallets.iter() {
+            let params = make_test_params("lip", m, 0.5);
+            let result = compute_strike_impact(&params, None);
+            results.push(result);
+        }
+        let soft_attack = results[0].audio_synthesis_params.attack_ms;
+        let metal_attack = results[3].audio_synthesis_params.attack_ms;
+        assert!(soft_attack > metal_attack);
+    }
+
+    #[test]
+    fn test_compute_strike_impact_force_amplitude_relationship() {
+        let params1 = make_test_params("lip", "medium", 0.2);
+        let params2 = make_test_params("lip", "medium", 0.8);
+        let r1 = compute_strike_impact(&params1, None);
+        let r2 = compute_strike_impact(&params2, None);
+        assert!(r2.peak_contact_force_n > r1.peak_contact_force_n);
+        assert!(r2.perceived_loudness_phon > r1.perceived_loudness_phon);
+    }
+
+    #[test]
+    fn test_get_position_options() {
+        let opts = get_position_options();
+        assert_eq!(opts.len(), 5);
+        for (key, name, factor) in opts {
+            assert!(!key.is_empty());
+            assert!(!name.is_empty());
+            assert!(factor > 0.0 && factor <= 1.5);
+        }
+    }
+
+    #[test]
+    fn test_get_mallet_options() {
+        let opts = get_mallet_options();
+        assert_eq!(opts.len(), 4);
+        let keys: Vec<&str> = opts.iter().map(|(k, _, _)| *k).collect();
+        assert!(keys.contains(&"soft"));
+        assert!(keys.contains(&"medium"));
+        assert!(keys.contains(&"hard"));
+        assert!(keys.contains(&"metal"));
+    }
+
+    #[test]
+    fn test_generate_strike_tutorial() {
+        let tutorial = generate_strike_tutorial();
+        assert!(!tutorial.is_empty());
+        assert!(tutorial.len() >= 5);
+        let content: String = tutorial.join(" ");
+        assert!(content.contains("编钟"));
+        assert!(content.contains("力度"));
+    }
+
+    #[test]
+    fn test_strike_idempotency_for_deterministic_fields() {
+        let params = make_test_params("waist", "medium", 0.5);
+        let r1 = compute_strike_impact(&params, None);
+        let r2 = compute_strike_impact(&params, None);
+        assert!((r1.impact_velocity - r2.impact_velocity).abs() < 0.001);
+        assert!((r1.peak_contact_force_n - r2.peak_contact_force_n).abs() < 0.001);
+        assert!((r1.contact_duration_ms - r2.contact_duration_ms).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_audio_synth_params_web_audio_compatible() {
+        let params = make_test_params("lip", "medium", 0.5);
+        let result = compute_strike_impact(&params, None);
+        let synth = result.audio_synthesis_params;
+        assert!(synth.fundamental_hz >= 20.0);
+        assert!(synth.fundamental_hz <= 20000.0);
+        assert!(synth.master_gain >= 0.0 && synth.master_gain <= 2.0);
+        assert!(synth.attack_ms >= 0.0);
+        for p in &synth.partials {
+            assert!(p.freq_ratio > 0.0);
+            assert!(p.gain >= 0.0);
+            assert!(p.decay_s > 0.0);
+        }
+    }
+
+    #[test]
+    fn test_hertz_contact_force_realism() {
+        let params = make_test_params("lip", "hard", 0.9);
+        let result = compute_strike_impact(&params, None);
+        assert!(result.peak_contact_force_n > 10.0);
+        assert!(result.peak_contact_force_n < 100000.0);
+        assert!(result.contact_duration_ms > 0.1);
+        assert!(result.contact_duration_ms < 100.0);
+        assert!(result.impact_velocity > 0.0);
+    }
+
+    #[test]
+    fn test_harmonic_amplitudes_valid() {
+        let params = make_test_params("lip", "medium", 0.5);
+        let result = compute_strike_impact(&params, None);
+        assert_eq!(result.harmonic_amplitudes.len(), 8);
+        for &amp in &result.harmonic_amplitudes {
+            assert!(amp >= 0.0);
+        }
+    }
+
+    #[test]
+    fn test_quality_description_not_empty() {
+        let params = make_test_params("lip", "medium", 0.5);
+        let result = compute_strike_impact(&params, None);
+        assert!(!result.quality_description.is_empty());
+    }
 }

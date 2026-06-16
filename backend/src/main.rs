@@ -13,6 +13,12 @@ mod models;
 mod mqtt_client;
 mod simulation;
 
+mod alloy_analyzer;
+mod process_comparator;
+mod tower_acoustics;
+mod vr_bell_strike;
+mod compute_pool;
+
 use acoustic_simulator::AcousticSimulator;
 use alarm_mqtt::AlarmMqttService;
 use axum::{
@@ -26,6 +32,7 @@ use config_loader::{MATERIALS, ACOUSTIC_PARAMS};
 use db::Database;
 use dtu_receiver::DtuReceiver;
 use handlers::AppState;
+use compute_pool::ComputePool;
 use message_bus::*;
 use mqtt_client::MqttNotifier;
 use std::net::SocketAddr;
@@ -152,11 +159,15 @@ async fn main() -> anyhow::Result<()> {
 
     info!("--- 启动 HTTP API 服务 ---");
 
+    let compute_pool = ComputePool::new();
+    info!("✅ 计算线程池已初始化 ({} 线程)", compute_pool.config().max_threads);
+
     let app_state = AppState {
         db: db.clone(),
         tx_to_dtu: tx_dtu,
         tx_to_casting: tx_to_casting_external,
         tx_to_acoustic: tx_to_acoustic_external,
+        compute_pool,
     };
 
     let cors = CorsLayer::new()

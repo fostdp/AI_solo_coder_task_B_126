@@ -1,3 +1,5 @@
+//! 钟楼声学模块 - 模拟钟楼建筑对钟声传播的声学影响
+
 use crate::models::*;
 
 const GRID_SIZE: usize = 100;
@@ -691,4 +693,209 @@ pub fn get_preset_tower_configs() -> Vec<TowerBuildingParams> {
             ceiling_height_m: 6.0,
         },
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::{TowerAcousticRequest, TowerBuildingParams};
+
+    fn make_test_params() -> TowerBuildingParams {
+        TowerBuildingParams {
+            tower_style: "test".to_string(),
+            height_m: 15.0,
+            width_m: 8.0,
+            depth_m: 8.0,
+            wall_thickness_m: 0.3,
+            wall_material: "brick".to_string(),
+            bell_chamber_height_m: 5.0,
+            window_count: 4,
+            window_width_m: 1.5,
+            window_height_m: 2.0,
+            roof_style: "hip".to_string(),
+            openings_direction_deg: vec![0.0, 90.0, 180.0, 270.0],
+            internal_absorption_coeff: 0.1,
+            internal_reverberation: 2.0,
+            ground_type: "stone".to_string(),
+            wall_roughness_mm: 5.0,
+            ceiling_height_m: 4.0,
+        }
+    }
+
+    #[test]
+    fn test_simulate_tower_acoustics_basic() {
+        let params = make_test_params();
+        let req = TowerAcousticRequest {
+            bell_id: None,
+            frequency_hz: Some(256.0),
+            tower: params,
+        };
+        let result = simulate_tower_acoustics(&req);
+        assert!(result.with_tower.avg_spl_db > 0.0);
+        assert!(result.with_tower.reverberation_time_s > 0.0);
+        assert!(!result.directivity_pattern.is_empty());
+    }
+
+    #[test]
+    fn test_simulate_tower_acoustics_invalid_material() {
+        let mut params = make_test_params();
+        params.wall_material = "unknown_material_xyz".to_string();
+        let req = TowerAcousticRequest {
+            bell_id: None,
+            frequency_hz: Some(440.0),
+            tower: params,
+        };
+        let result = simulate_tower_acoustics(&req);
+        assert!(result.with_tower.avg_spl_db > 0.0);
+    }
+
+    #[test]
+    fn test_get_preset_tower_configs() {
+        let presets = get_preset_tower_configs();
+        assert!(!presets.is_empty());
+        assert!(presets.len() >= 4);
+        for p in &presets {
+            assert!(!p.tower_style.is_empty());
+            assert!(p.height_m > 0.0);
+            assert!(p.width_m > 0.0);
+            assert!(p.window_count >= 0);
+        }
+    }
+
+    #[test]
+    fn test_tower_acoustics_vs_free_field() {
+        let params = make_test_params();
+        let req = TowerAcousticRequest {
+            bell_id: None,
+            frequency_hz: Some(300.0),
+            tower: params,
+        };
+        let result = simulate_tower_acoustics(&req);
+        assert!(result.comparison_metrics.overall_improvement_score > 0.0);
+        assert!(result.comparison_metrics.spl_boost_at_100m_db.abs() < 30.0);
+    }
+
+    #[test]
+    fn test_directivity_pattern_symmetry() {
+        let params = make_test_params();
+        let req = TowerAcousticRequest {
+            bell_id: None,
+            frequency_hz: Some(200.0),
+            tower: params,
+        };
+        let result = simulate_tower_acoustics(&req);
+        assert!(result.directivity_pattern.len() >= 8);
+        for d in &result.directivity_pattern {
+            assert!(d.with_tower_spl > 0.0);
+        }
+    }
+
+    #[test]
+    fn test_zero_windows_boundary() {
+        let mut params = make_test_params();
+        params.window_count = 0;
+        params.openings_direction_deg = vec![];
+        let req = TowerAcousticRequest {
+            bell_id: None,
+            frequency_hz: Some(256.0),
+            tower: params,
+        };
+        let result = simulate_tower_acoustics(&req);
+        assert!(result.with_tower.avg_spl_db > 0.0);
+    }
+
+    #[test]
+    fn test_many_windows_boundary() {
+        let mut params = make_test_params();
+        params.window_count = 20;
+        let req = TowerAcousticRequest {
+            bell_id: None,
+            frequency_hz: Some(256.0),
+            tower: params,
+        };
+        let result = simulate_tower_acoustics(&req);
+        assert!(result.with_tower.avg_spl_db > 0.0);
+    }
+
+    #[test]
+    fn test_extreme_frequency_low() {
+        let params = make_test_params();
+        let req = TowerAcousticRequest {
+            bell_id: None,
+            frequency_hz: Some(30.0),
+            tower: params,
+        };
+        let result = simulate_tower_acoustics(&req);
+        assert!(result.with_tower.avg_spl_db > 0.0);
+    }
+
+    #[test]
+    fn test_extreme_dimensions() {
+        let mut params = make_test_params();
+        params.height_m = 50.0;
+        params.width_m = 30.0;
+        params.depth_m = 30.0;
+        let req = TowerAcousticRequest {
+            bell_id: None,
+            frequency_hz: Some(100.0),
+            tower: params,
+        };
+        let result = simulate_tower_acoustics(&req);
+        assert!(result.with_tower.reverberation_time_s > 0.0);
+    }
+
+    #[test]
+    fn test_default_frequency() {
+        let params = make_test_params();
+        let req = TowerAcousticRequest {
+            bell_id: None,
+            frequency_hz: None,
+            tower: params,
+        };
+        let result = simulate_tower_acoustics(&req);
+        assert!(result.with_tower.max_spl_db > 0.0);
+    }
+
+    #[test]
+    fn test_sound_coverage_zones_nonempty() {
+        let params = make_test_params();
+        let req = TowerAcousticRequest {
+            bell_id: None,
+            frequency_hz: Some(256.0),
+            tower: params,
+        };
+        let result = simulate_tower_acoustics(&req);
+        assert!(!result.sound_coverage.is_empty());
+        for zone in &result.sound_coverage {
+            assert!(!zone.zone_name.is_empty());
+            assert!(zone.with_tower_avg_spl > 0.0);
+            assert!(zone.without_tower_avg_spl > 0.0);
+        }
+    }
+
+    #[test]
+    fn test_optimization_tips_present() {
+        let params = make_test_params();
+        let req = TowerAcousticRequest {
+            bell_id: None,
+            frequency_hz: Some(256.0),
+            tower: params,
+        };
+        let result = simulate_tower_acoustics(&req);
+        assert!(!result.optimization_tips.is_empty());
+    }
+
+    #[test]
+    fn test_sound_field_2d_valid() {
+        let params = make_test_params();
+        let req = TowerAcousticRequest {
+            bell_id: None,
+            frequency_hz: Some(256.0),
+            tower: params,
+        };
+        let result = simulate_tower_acoustics(&req);
+        assert!(!result.with_tower.field_2d.is_empty());
+        assert!(!result.without_tower.field_2d.is_empty());
+        assert!(result.with_tower.max_spl_db >= result.with_tower.min_spl_db);
+    }
 }

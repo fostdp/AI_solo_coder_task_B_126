@@ -1,6 +1,7 @@
 use crate::db::Database;
 use crate::message_bus::{BusMessage, SensorToCastingTx, SensorToAcousticTx, SensorToDtuTx};
 use crate::models::*;
+use crate::compute_pool::ComputePool;
 use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
@@ -17,6 +18,7 @@ pub struct AppState {
     pub tx_to_dtu: SensorToDtuTx,
     pub tx_to_casting: SensorToCastingTx,
     pub tx_to_acoustic: SensorToAcousticTx,
+    pub compute_pool: ComputePool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -292,8 +294,14 @@ pub async fn post_alloy_comparison(
     } else {
         None
     };
-    let result = crate::simulation::compare_alloys(&req, bell.as_ref());
-    Json(ApiResponse::ok(result))
+    let pool = state.compute_pool.clone();
+    let result = pool.run_alloy_analysis(move || {
+        crate::alloy_analyzer::compare_alloys(&req, bell.as_ref())
+    }).await;
+    match result {
+        Ok(data) => Json(ApiResponse::ok(data)).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(ApiResponse::<()>::err(&e))).into_response(),
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -313,10 +321,17 @@ pub async fn get_alloy_suggestion(
 // ========== Feature 2: 古代vs现代铸造工艺对比 ==========
 
 pub async fn post_casting_method_comparison(
+    State(state): State<AppState>,
     Json(req): Json<CastingMethodRequest>,
 ) -> impl IntoResponse {
-    let result = crate::simulation::compare_casting_methods(&req);
-    Json(ApiResponse::ok(result))
+    let pool = state.compute_pool.clone();
+    let result = pool.run_process_compare(move || {
+        crate::process_comparator::compare_casting_methods(&req)
+    }).await;
+    match result {
+        Ok(data) => Json(ApiResponse::ok(data)).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(ApiResponse::<()>::err(&e))).into_response(),
+    }
 }
 
 pub async fn get_casting_method_list() -> impl IntoResponse {
@@ -352,10 +367,17 @@ pub async fn get_recommended_method(
 // ========== Feature 3: 钟楼建筑声学传播模拟 ==========
 
 pub async fn post_tower_acoustic_sim(
+    State(state): State<AppState>,
     Json(req): Json<TowerAcousticRequest>,
 ) -> impl IntoResponse {
-    let result = crate::simulation::simulate_tower_acoustics(&req);
-    Json(ApiResponse::ok(result))
+    let pool = state.compute_pool.clone();
+    let result = pool.run_tower_acoustics(move || {
+        crate::tower_acoustics::simulate_tower_acoustics(&req)
+    }).await;
+    match result {
+        Ok(data) => Json(ApiResponse::ok(data)).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(ApiResponse::<()>::err(&e))).into_response(),
+    }
 }
 
 pub async fn get_preset_tower_configs() -> impl IntoResponse {
@@ -370,8 +392,14 @@ pub async fn post_virtual_strike(
     Json(params): Json<VirtualStrikeParams>,
 ) -> impl IntoResponse {
     let bell = state.db.get_bell(params.bell_id).await.ok().flatten();
-    let result = crate::simulation::compute_strike_impact(&params, bell.as_ref());
-    Json(ApiResponse::ok(result))
+    let pool = state.compute_pool.clone();
+    let result = pool.run_vr_strike(move || {
+        crate::vr_bell_strike::compute_strike_impact(&params, bell.as_ref())
+    }).await;
+    match result {
+        Ok(data) => Json(ApiResponse::ok(data)).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(ApiResponse::<()>::err(&e))).into_response(),
+    }
 }
 
 pub async fn get_strike_options() -> impl IntoResponse {

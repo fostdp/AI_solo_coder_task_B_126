@@ -1,3 +1,5 @@
+//! 工艺对比模块 - 对比古今铸造工艺的缺陷率与品质差异
+
 use crate::models::*;
 use std::collections::HashMap;
 
@@ -583,4 +585,149 @@ pub fn get_recommended_method_for_bell(
 
     scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap());
     scored.first().map(|s| s.1.clone()).unwrap_or_default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::CastingMethodRequest;
+
+    #[test]
+    fn test_compare_casting_methods_all() {
+        let req = CastingMethodRequest {
+            bell_id: None,
+            methods: Some(vec![]),
+        };
+        let result = compare_casting_methods(&req);
+        assert!(!result.methods.is_empty());
+        assert!(result.methods.len() >= 5);
+    }
+
+    #[test]
+    fn test_compare_casting_methods_specific() {
+        let req = CastingMethodRequest {
+            bell_id: None,
+            methods: Some(vec![
+                "ancient_sand_lost_wax".to_string(),
+                "modern_investment_casting".to_string(),
+            ]),
+        };
+        let result = compare_casting_methods(&req);
+        assert_eq!(result.methods.len(), 2);
+    }
+
+    #[test]
+    fn test_compare_casting_methods_invalid_keys() {
+        let req = CastingMethodRequest {
+            bell_id: None,
+            methods: Some(vec!["nonexistent_method".to_string()]),
+        };
+        let result = compare_casting_methods(&req);
+        assert!(result.methods.is_empty());
+    }
+
+    #[test]
+    fn test_compare_casting_methods_none_returns_all() {
+        let req = CastingMethodRequest {
+            bell_id: None,
+            methods: None,
+        };
+        let result = compare_casting_methods(&req);
+        assert!(!result.methods.is_empty());
+    }
+
+    #[test]
+    fn test_get_casting_method_key_list() {
+        let keys = get_casting_method_key_list();
+        assert!(!keys.is_empty());
+        assert!(keys.len() >= 6);
+        assert!(keys.contains(&"ancient_sand_lost_wax".to_string()));
+        assert!(keys.contains(&"modern_investment_casting".to_string()));
+    }
+
+    #[test]
+    fn test_get_recommended_method_for_bell_high_quality() {
+        let method = get_recommended_method_for_bell(
+            3.0,
+            95.0,
+            200.0,
+            true,
+        );
+        assert!(!method.is_empty());
+    }
+
+    #[test]
+    fn test_get_recommended_method_for_bell_low_budget() {
+        let method = get_recommended_method_for_bell(
+            1.0,
+            50.0,
+            10.0,
+            false,
+        );
+        assert!(!method.is_empty());
+    }
+
+    #[test]
+    fn test_casting_metrics_have_standard_info() {
+        let req = CastingMethodRequest {
+            bell_id: None,
+            methods: Some(vec!["modern_sand_green".to_string()]),
+        };
+        let result = compare_casting_methods(&req);
+        if let Some(m) = result.methods.first() {
+            assert!(!m.standard_code.is_empty());
+            assert!(!m.standard_reference.is_empty());
+            assert!(!m.data_source.is_empty());
+            assert!(!m.quality_grade.is_empty());
+        }
+    }
+
+    #[test]
+    fn test_defect_rate_reasonable_range() {
+        let req = CastingMethodRequest {
+            bell_id: None,
+            methods: Some(vec![]),
+        };
+        let result = compare_casting_methods(&req);
+        for m in &result.methods {
+            assert!(m.typical_defect_rate_pct >= 0.0);
+            assert!(m.typical_defect_rate_pct <= 50.0);
+        }
+    }
+
+    #[test]
+    fn test_ancient_methods_exist() {
+        let keys = get_casting_method_key_list();
+        let ancient_count = keys.iter().filter(|k| k.starts_with("ancient_")).count();
+        assert!(ancient_count >= 2);
+    }
+
+    #[test]
+    fn test_ancient_modern_summary_valid() {
+        let req = CastingMethodRequest {
+            bell_id: None,
+            methods: Some(vec![]),
+        };
+        let result = compare_casting_methods(&req);
+        assert!(result.ancient_vs_modern_summary.ancient_avg_scores.len() >= 3);
+        assert!(result.ancient_vs_modern_summary.modern_avg_scores.len() >= 3);
+        assert!(!result.ancient_vs_modern_summary.key_differences.is_empty());
+    }
+
+    #[test]
+    fn test_chart_data_consistent() {
+        let req = CastingMethodRequest {
+            bell_id: None,
+            methods: Some(vec![]),
+        };
+        let result = compare_casting_methods(&req);
+        assert_eq!(
+            result.comparison_chart_data.categories.len(),
+            result.comparison_chart_data.ancient_avg.len()
+        );
+        assert_eq!(
+            result.comparison_chart_data.ancient_avg.len(),
+            result.comparison_chart_data.modern_avg.len()
+        );
+    }
 }
