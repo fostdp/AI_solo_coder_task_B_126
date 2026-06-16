@@ -372,16 +372,16 @@ pub fn compare_casting_methods(req: &CastingMethodRequest) -> CastingComparisonR
     let (ancient, modern): (Vec<_>, Vec<_>) = selected.iter().partition(|m| m.era == "ancient");
 
     let categories = vec![
-        "尺寸精度".to_string(),
-        "表面质量".to_string(),
-        "组织品质".to_string(),
-        "声学潜力".to_string(),
-        "艺术表现力".to_string(),
-        "耐久年限".to_string(),
-        "生产效率".to_string(),
-        "材料利用率".to_string(),
-        "成本优势".to_string(),
-        "环境友好".to_string(),
+        "dimensional_accuracy".to_string(),
+        "surface_quality".to_string(),
+        "microstructure_quality".to_string(),
+        "acoustic_quality".to_string(),
+        "aesthetic_quality".to_string(),
+        "durability".to_string(),
+        "production_efficiency".to_string(),
+        "material_yield".to_string(),
+        "cost_efficiency".to_string(),
+        "environmental_friendliness".to_string(),
     ];
 
     let category_scorers: Vec<Box<dyn Fn(&CastingMethodMetrics) -> f64>> = vec![

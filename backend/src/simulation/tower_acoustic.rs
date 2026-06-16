@@ -201,7 +201,7 @@ fn compute_tower_directivity_boost(
         }
     }
 
-    let base_boost = 0.8 + openness * 1.0 + nearest_window_gain * 0.6;
+    let base_boost = 0.05 + openness * 1.8 + nearest_window_gain * 0.6;
 
     let low_freq_boost = if freq < 200.0 {
         1.0 + openness * 0.3
@@ -230,7 +230,7 @@ fn compute_directivity_pattern(
     for deg in (0..360).step_by(10) {
         let rad = (deg as f64).to_radians();
         let gi = (center as isize + (rad.cos() * r_grid as f64) as isize) as usize;
-        let gj = (center as isize + (rad.sin() * r_grid) as isize) as usize;
+        let gj = (center as isize + (rad.sin() * r_grid as f64) as isize) as usize;
 
         let gi_clamped = gi.min(GRID_SIZE - 1).max(0);
         let gj_clamped = gj.min(GRID_SIZE - 1).max(0);
@@ -247,11 +247,12 @@ fn compute_directivity_pattern(
         } else {
             60.0
         };
-        let with_spl = free_spl * (boost / 1.3).ln().max(-0.5).exp();
+        let with_spl_unclamped = free_spl * (boost / 1.3).ln().max(-0.5).exp();
+        let with_spl = with_spl_unclamped.min(120.0);
 
         points.push(TowerDirectivityPoint {
             angle_deg: deg as f64,
-            with_tower_spl: with_spl.min(120.0),
+            with_tower_spl: with_spl,
             without_tower_spl: free_spl,
             gain_db: with_spl - free_spl,
         });
@@ -337,12 +338,12 @@ fn compute_comparison_metrics(
     let area_with = count_above_threshold(&with_tower.field_2d, threshold);
     let area_without = count_above_threshold(&without.field_2d, threshold);
     let coverage_pct = if area_without > 0 {
-        ((area_with - area_without) as f64 / area_without as f64 * 100.0).max(-50.0)
+        ((area_with as f64 - area_without as f64) / area_without as f64 * 100.0).max(-50.0)
     } else {
         0.0
     };
 
-    let echo_reduction = (tower.internal_absorption_coeff * 10.0 + (1.0 - 0.95_f64.powf(tower.window_count as i32)) * 5.0).min(15.0);
+    let echo_reduction = (tower.internal_absorption_coeff * 10.0 + (1.0 - 0.95_f64.powf(tower.window_count as f64)) * 5.0).min(15.0);
 
     let freq_flatness = {
         let total_open_area = tower.window_count as f64 * tower.window_width_m * tower.window_height_m;

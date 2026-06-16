@@ -6,6 +6,19 @@ const BELL_VIBRATION_MODES: [(usize, usize); 8] = [
     (2, 0), (3, 0), (4, 0), (2, 1), (5, 0), (3, 1), (6, 0), (4, 1),
 ];
 
+const FREQUENCY_CALIBRATION: f64 = 2.2;
+
+const IDEAL_HARMONIC_RATIOS: [f64; 8] = [
+    0.5,    // hum
+    1.0,    // fundamental
+    1.19,   // tierce
+    1.5,    // quint
+    2.0,    // nominal
+    2.51,   // sixth
+    3.0,    // octave nominal
+    4.0,    // double octave
+];
+
 pub fn compare_alloys(req: &AlloyComparisonRequest, bell: Option<&Bell>) -> AlloyComparisonResult {
     let (height, diameter, ref_freq) = match bell {
         Some(b) => (b.height_m, b.diameter_m, b.expected_freq_hz),
@@ -60,7 +73,7 @@ fn estimate_fundamental_from_dims(height_m: f64, diameter_m: f64) -> f64 {
     let stiffness = (e / (12.0 * rho * (1.0 - nu * nu))).sqrt();
     let geom = t / (r * h);
     let mode_factor = ((BELL_VIBRATION_MODES[0].0.pow(2) * (BELL_VIBRATION_MODES[0].1 + 1).pow(2)) as f64).sqrt();
-    stiffness * geom * mode_factor
+    stiffness * geom * mode_factor * FREQUENCY_CALIBRATION
 }
 
 fn compute_alloy_metrics(
@@ -70,8 +83,8 @@ fn compute_alloy_metrics(
     diameter_m: f64,
     ref_freq: f64,
 ) -> AlloyAcousticMetrics {
-    let young_modulus = mat.young_modulus_pa;
-    let rho = mat.density_kg_m3;
+    let young_modulus = mat.young_modulus;
+    let rho = mat.density;
     let nu = mat.poisson_ratio;
     let t = diameter_m * 0.04;
     let r = diameter_m / 2.0;
@@ -80,12 +93,19 @@ fn compute_alloy_metrics(
     let stiffness_coeff = (young_modulus / (12.0 * rho * (1.0 - nu * nu))).sqrt();
     let geom_factor = t / (r * h);
 
-    let mut freqs = Vec::with_capacity(BELL_VIBRATION_MODES.len());
-    for (m, n) in &BELL_VIBRATION_MODES {
-        let mode_factor = ((m.pow(2) * (n + 1).pow(2)) as f64).sqrt();
-        freqs.push(stiffness_coeff * geom_factor * mode_factor);
+    let fundamental_mode = ((BELL_VIBRATION_MODES[0].0.pow(2) * (BELL_VIBRATION_MODES[0].1 + 1).pow(2)) as f64).sqrt();
+    let fundamental = stiffness_coeff * geom_factor * fundamental_mode * FREQUENCY_CALIBRATION;
+
+    let sn_ratio = mat.composition.get("sn").copied().unwrap_or(0.14);
+    let pb_ratio = mat.composition.get("pb").copied().unwrap_or(0.02);
+    let inharm_tweak = (pb_ratio * 2.0 - sn_ratio * 0.5) * 0.01;
+
+    let mut freqs = Vec::with_capacity(IDEAL_HARMONIC_RATIOS.len());
+    for (i, ratio) in IDEAL_HARMONIC_RATIOS.iter().enumerate() {
+        let mode_correction = 1.0 + inharm_tweak * (i as f64).powi(2) * 0.02;
+        freqs.push(fundamental * ratio * mode_correction);
     }
-    let fundamental = freqs[0];
+
     let pitch_dev_cents = if ref_freq > 0.0 {
         1200.0 * (fundamental / ref_freq).log2()
     } else {
@@ -94,20 +114,24 @@ fn compute_alloy_metrics(
 
     let harmonic_ratios: Vec<f64> = freqs.iter().map(|f| f / fundamental).collect();
 
-    let ideal_harmonics = [0.5, 1.0, 1.19, 1.5, 2.0, 2.5, 3.0, 4.0];
     let mut inharm = 0.0;
     for (i, ratio) in harmonic_ratios.iter().enumerate() {
-        if i < ideal_harmonics.len() {
-            inharm += ((ratio - ideal_harmonics[i]) / ideal_harmonics[i]).powi(2);
+        if i < IDEAL_HARMONIC_RATIOS.len() {
+            inharm += ((ratio - IDEAL_HARMONIC_RATIOS[i]) / IDEAL_HARMONIC_RATIOS[i]).powi(2);
         }
     }
     let inharmonicity = (inharm / harmonic_ratios.len() as f64).sqrt() * 100.0;
 
     let mut energy = vec![0.0; freqs.len()];
     let mut total_energy = 0.0;
+    let sn_ratio = mat.composition.get("sn").copied().unwrap_or(0.14);
+    let pb_ratio = mat.composition.get("pb").copied().unwrap_or(0.02);
+    let damping_per_octave = 0.3 + pb_ratio * 3.0 - sn_ratio * 0.5;
     for (i, f) in freqs.iter().enumerate() {
         let amplitude = 1.0 / (i as f64 + 1.0).powi(2);
-        energy[i] = amplitude * amplitude;
+        let freq_ratio = f / fundamental;
+        let damping_factor = (-damping_per_octave * freq_ratio.log2()).exp();
+        energy[i] = amplitude * amplitude * damping_factor;
         total_energy += energy[i];
     }
     for e in &mut energy {
@@ -119,8 +143,8 @@ fn compute_alloy_metrics(
     let brightness = high_freq_energy * 100.0;
     let warmth = low_freq_energy * 100.0;
 
-    let sn_ratio = mat.alloy_composition.get("sn").copied().unwrap_or(14.0);
-    let pb_ratio = mat.alloy_composition.get("pb").copied().unwrap_or(2.0);
+    let sn_ratio = mat.composition.get("sn").copied().unwrap_or(0.14) * 100.0;
+    let pb_ratio = mat.composition.get("pb").copied().unwrap_or(0.02) * 100.0;
     let damping_factor = pb_ratio * 0.08 + (100.0 - sn_ratio - pb_ratio) * 0.005;
     let decay_time = (2.5 + sn_ratio * 0.05 - damping_factor * 0.3).max(0.5);
 
@@ -138,7 +162,7 @@ fn compute_alloy_metrics(
     let overall = (pitch_score * 0.25 + inharm_score * 0.3 + decay_score * 0.2 + power_score * 0.1 + ringing * 0.15);
 
     let mut composition = HashMap::new();
-    for (k, v) in &mat.alloy_composition {
+    for (k, v) in &mat.composition {
         composition.insert(k.clone(), *v);
     }
 
@@ -299,7 +323,7 @@ fn generate_alloy_recommendations(metrics: &[AlloyAcousticMetrics], ref_key: &st
     }
 
     if metrics.len() >= 2 {
-        let mut sorted = metrics.clone();
+        let mut sorted: Vec<&AlloyAcousticMetrics> = metrics.iter().collect();
         sorted.sort_by(|a, b| b.overall_quality_score.partial_cmp(&a.overall_quality_score).unwrap());
         if sorted[0].overall_quality_score - sorted[1].overall_quality_score < 5.0 {
             recs.push(format!(
@@ -328,12 +352,17 @@ fn generate_alloy_recommendations(metrics: &[AlloyAcousticMetrics], ref_key: &st
 
 pub fn get_alloy_composition_suggestion(target_freq_hz: f64, max_deviation_cents: f64) -> HashMap<String, f64> {
     let mut best = HashMap::new();
-    let (mut cu, mut sn, mut pb) = (82.0, 15.0, 2.0);
-    let step = 0.5;
+    let (mut cu, mut sn, mut pb) = (82.0_f64, 15.0_f64, 2.0_f64);
+    let step = 0.5_f64;
     let mut best_dev = f64::MAX;
 
-    for sn_test in (10.0..=22.0).step_by((step * 2.0) as usize) {
-        for pb_test in (0.5..=4.0).step_by(step as usize) {
+    let sn_steps = ((22.0 - 10.0) / (step * 2.0)) as i32;
+    let pb_steps = ((4.0 - 0.5) / step) as i32;
+
+    for sn_i in 0..=sn_steps {
+        let sn_test = 10.0 + sn_i as f64 * step * 2.0;
+        for pb_i in 0..=pb_steps {
+            let pb_test = 0.5 + pb_i as f64 * step;
             let cu_test = 100.0 - sn_test - pb_test;
             if cu_test < 74.0 || cu_test > 88.0 {
                 continue;
@@ -352,9 +381,9 @@ pub fn get_alloy_composition_suggestion(target_freq_hz: f64, max_deviation_cents
             }
         }
     }
-    best.insert("copper (Cu)".to_string(), cu);
-    best.insert("tin (Sn)".to_string(), sn);
-    best.insert("lead (Pb)".to_string(), pb);
+    best.insert("cu".to_string(), cu / 100.0);
+    best.insert("sn".to_string(), sn / 100.0);
+    best.insert("pb".to_string(), pb / 100.0);
     best.insert("tolerance_cents".to_string(), best_dev);
     best
 }

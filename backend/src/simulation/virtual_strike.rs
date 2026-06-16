@@ -46,7 +46,9 @@ pub fn compute_strike_impact(
     };
 
     let peak_force_n = (0.5 * mallet_mass * impact_vel.powi(2) * contact_modulus).powf(2.0 / 3.0) * 0.01;
-    let contact_ms = (1.0 / bell_freq * 1000.0) * (2.0 - strike_force) * 0.7;
+    let base_contact_ms = (1.0 / bell_freq * 1000.0) * (2.0 - strike_force) * 0.7;
+    let hardness_factor = (5e7 / contact_modulus).powf(0.4);
+    let contact_ms = base_contact_ms * hardness_factor;
 
     let pos_amplitude_factor = match pos_key {
         "lip" => 1.2,
